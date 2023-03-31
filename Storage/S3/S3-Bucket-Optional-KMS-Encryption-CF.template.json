@@ -1,0 +1,491 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS CloudFormation Template to create an S3 Bucket with optional Encryption. If Encrypted, a cooresponding Bucket Policy enforcing server side encryption and a KMS Key will be also be provisioned.",
+    "Parameters": {
+        "S3BucketName": {
+            "Description": "Specify the name of the Encrypted S3 Bucket that will be provisioned. S3 Bucket names MUST be globally unique and all lowercase.",
+            "Type": "String",
+            "AllowedPattern": "[a-z0-9-_]*",
+            "ConstraintDescription": "Must be lowercase alphanumeric value or numeric characters. Example: a-z, 0-9, -_"
+        },
+        "S3BucketNameHelper": {
+            "Description": "Specify if you want to append the region details to the selected bucket name to ensure uniqueness. If selected then '-{{current region}}' will be added to the bucket name. Example (mybucket-us-east-1)",
+            "Type": "String",
+            "AllowedValues": [
+                "Disable",
+                "Append Region"
+            ],
+            "Default": "Disable"
+        },
+        "S3Versioning": {
+            "Description": "Specify if the provisioned S3 bucket should have versioning enabled. Suspended = Disabled",
+            "Type": "String",
+            "AllowedValues": [
+                "Suspended",
+                "Enabled"
+            ],
+            "Default": "Suspended"
+        },
+        "S3Encryption": {
+            "Description": "Specify if the S3 bucket should be encrypted, if 'Enabled' is selected, then a new S3 Encryption KMS Key will be provisioned.",
+            "Type": "String",
+            "AllowedValues": [
+                "Disabled",
+                "Enabled"
+            ],
+            "Default": "Disabled"
+        }
+    },
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": {
+                        "default": "Required Template Parameters"
+                    },
+                    "Parameters": [
+                        "S3BucketName"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Optional Value Defaulted Template Parameters"
+                    },
+                    "Parameters": [
+                        "S3BucketNameHelper",
+                        "S3Versioning",
+                        "S3Encryption"
+                    ]
+                }
+            ]
+        }
+    },
+    "Conditions": {
+        "Encrypted": {
+            "Fn::Equals": [
+                {
+                    "Ref": "S3Encryption"
+                },
+                "Enabled"
+            ]
+        },
+        "NotEncrypted": {
+            "Fn::Not": [
+                {
+                    "Condition": "Encrypted"
+                }
+            ]
+        },
+        "AddRegion": {
+            "Fn::Equals": [
+                {
+                    "Ref": "S3BucketNameHelper"
+                },
+                "Append Region"
+            ]
+        }
+    },
+    "Resources": {
+        "S3BucketKMSKey": {
+            "Type": "AWS::KMS::Key",
+            "Condition": "Encrypted",
+            "Properties": {
+                "Description": "S3 KMS Key used to encrypted contents of an S3 Bucket",
+                "Enabled": true,
+                "EnableKeyRotation": true,
+                "KeyPolicy": {
+                    "Version": "2012-10-17",
+                    "Id": {
+                        "Fn::Sub": "S3-Bucket-KMS-Encryption-Key-Policy-${AWS::Region}"
+                    },
+                    "Statement": [
+                        {
+                            "Sid": "Allow Administration of the S3 Bucket KMS Encryption Key",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": {
+                                    "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"
+                                }
+                            },
+                            "Action": [
+                                "kms:Create*",
+                                "kms:Describe*",
+                                "kms:Enable*",
+                                "kms:List*",
+                                "kms:Put*",
+                                "kms:Update*",
+                                "kms:Revoke*",
+                                "kms:Disable*",
+                                "kms:Get*",
+                                "kms:Delete*",
+                                "kms:ScheduleKeyDeletion",
+                                "kms:CancelKeyDeletion"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow Usage of the the S3 Bucket KMS Encryption Key",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": [
+                                    {
+                                        "Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"
+                                    }
+                                ]
+                            },
+                            "Action": [
+                                "kms:Encrypt",
+                                "kms:Decrypt",
+                                "kms:ReEncrypt*",
+                                "kms:GenerateDataKey*",
+                                "kms:DescribeKey"
+                            ],
+                            "Resource": "*"
+                        }
+                    ]
+                }
+            }
+        },
+        "NonEncryptedS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Condition": "NotEncrypted",
+            "Metadata": {
+                "cfn_nag": {
+                    "rules_to_suppress": [
+                        {
+                            "id": "W35",
+                            "reason": "S3 should have logging, this can be configured depending on the use case of the bucket."
+                        }
+                    ]
+                }
+            },
+            "Properties": {
+                "BucketName": {
+                    "Fn::If": [
+                        "AddRegion",
+                        {
+                            "Fn::Sub": "${S3BucketName}-${AWS::Region}"
+                        },
+                        {
+                            "Ref": "S3BucketName"
+                        }
+                    ]
+                },
+                "VersioningConfiguration": {
+                    "Status": {
+                        "Ref": "S3Versioning"
+                    }
+                }
+            }
+        },
+        "EncryptedS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Condition": "Encrypted",
+            "Metadata": {
+                "cfn_nag": {
+                    "rules_to_suppress": [
+                        {
+                            "id": "W35",
+                            "reason": "S3 should have logging, this can be configured depending on the use case of the bucket."
+                        }
+                    ]
+                }
+            },
+            "Properties": {
+                "BucketName": {
+                    "Fn::If": [
+                        "AddRegion",
+                        {
+                            "Fn::Sub": "${S3BucketName}-${AWS::Region}"
+                        },
+                        {
+                            "Ref": "S3BucketName"
+                        }
+                    ]
+                },
+                "VersioningConfiguration": {
+                    "Status": {
+                        "Ref": "S3Versioning"
+                    }
+                },
+                "BucketEncryption": {
+                    "ServerSideEncryptionConfiguration": [
+                        {
+                            "ServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "aws:kms",
+                                "KMSMasterKeyID": {
+                                    "Ref": "S3BucketKMSKey"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "EncryptedS3BucketPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "Condition": "Encrypted",
+            "Properties": {
+                "Bucket": {
+                    "Ref": "EncryptedS3Bucket"
+                },
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "DenyNonSecureTransport",
+                            "Effect": "Deny",
+                            "Principal": {
+                                "AWS": "*"
+                            },
+                            "Action": [
+                                "s3:*"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "/",
+                                        [
+                                            {
+                                                "Fn::GetAtt": [
+                                                    "EncryptedS3Bucket",
+                                                    "Arn"
+                                                ]
+                                            },
+                                            "*"
+                                        ]
+                                    ]
+                                }
+                            ],
+                            "Condition": {
+                                "Bool": {
+                                    "aws:SecureTransport": false
+                                }
+                            }
+                        },
+                        {
+                            "Sid": "DenyIncorrectEncryptionHeader",
+                            "Effect": "Deny",
+                            "Principal": {
+                                "AWS": "*"
+                            },
+                            "Action": "s3:PutObject",
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "/",
+                                        [
+                                            {
+                                                "Fn::GetAtt": [
+                                                    "EncryptedS3Bucket",
+                                                    "Arn"
+                                                ]
+                                            },
+                                            "*"
+                                        ]
+                                    ]
+                                }
+                            ],
+                            "Condition": {
+                                "StringNotEquals": {
+                                    "s3:x-amz-server-side-encryption": "aws:kms"
+                                }
+                            }
+                        },
+                        {
+                            "Sid": "DenyUnEncryptedObjectUploads",
+                            "Effect": "Deny",
+                            "Principal": {
+                                "AWS": "*"
+                            },
+                            "Action": "s3:PutObject",
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "/",
+                                        [
+                                            {
+                                                "Fn::GetAtt": [
+                                                    "EncryptedS3Bucket",
+                                                    "Arn"
+                                                ]
+                                            },
+                                            "*"
+                                        ]
+                                    ]
+                                }
+                            ],
+                            "Condition": {
+                                "Null": {
+                                    "s3:x-amz-server-side-encryption": "true"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "NonEncryptedS3BucketName": {
+            "Description": "Name of the Non encrypted S3 bucket provisioned.",
+            "Condition": "NotEncrypted",
+            "Value": {
+                "Ref": "NonEncryptedS3Bucket"
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}"
+                }
+            }
+        },
+        "NonEncryptedS3BucketArn": {
+            "Description": "ARN of the Non encrypted S3 bucket provisioned.",
+            "Condition": "NotEncrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "NonEncryptedS3Bucket",
+                    "Arn"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}-ARN"
+                }
+            }
+        },
+        "NonEncryptedS3BucketDomainName": {
+            "Description": "S3 Service Domain Name of the Non encrypted S3 bucket provisioned.",
+            "Condition": "NotEncrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "NonEncryptedS3Bucket",
+                    "DomainName"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}-DomainName"
+                }
+            }
+        },
+        "NonEncryptedS3BucketRegionalDomainName": {
+            "Description": "S3 Service Regional Domain Name of the Non encrypted S3 bucket provisioned.",
+            "Condition": "NotEncrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "NonEncryptedS3Bucket",
+                    "RegionalDomainName"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}-Regional-DomainName"
+                }
+            }
+        },
+        "EncryptedS3BucketName": {
+            "Description": "Name of the encrypted S3 bucket provisioned.",
+            "Condition": "Encrypted",
+            "Value": {
+                "Ref": "EncryptedS3Bucket"
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}"
+                }
+            }
+        },
+        "EncryptedS3BucketArn": {
+            "Description": "ARN of the encrypted S3 bucket provisioned.",
+            "Condition": "Encrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "EncryptedS3Bucket",
+                    "Arn"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}-ARN"
+                }
+            }
+        },
+        "EncryptedS3BucketDomainName": {
+            "Description": "S3 Service Domain Name of the encrypted S3 bucket provisioned.",
+            "Condition": "Encrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "EncryptedS3Bucket",
+                    "DomainName"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}-DomainName"
+                }
+            }
+        },
+        "EncryptedS3BucketRegionalDomainName": {
+            "Description": "S3 Service Regional Domain Name of the encrypted S3 bucket provisioned.",
+            "Condition": "Encrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "EncryptedS3Bucket",
+                    "RegionalDomainName"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${S3BucketName}-Regional-DomainName"
+                }
+            }
+        },
+        "S3BucketKMSKeyId": {
+            "Description": "The ID of the KMS key that will be used to encrypt S3 objects in the provisioned S3 encrypted bucket.",
+            "Condition": "Encrypted",
+            "Value": {
+                "Ref": "S3BucketKMSKey"
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            {
+                                "Ref": "S3BucketName"
+                            },
+                            "KMS",
+                            "Key"
+                        ]
+                    ]
+                }
+            }
+        },
+        "S3BucketKMSKeyIdArn": {
+            "Description": "The ARN of the KMS key that will be used to encrypt S3 objects in the provisioned S3 encrypted bucket.",
+            "Condition": "Encrypted",
+            "Value": {
+                "Fn::GetAtt": [
+                    "S3BucketKMSKey",
+                    "Arn"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            {
+                                "Ref": "S3BucketName"
+                            },
+                            "KMS",
+                            "Key",
+                            "ARN"
+                        ]
+                    ]
+                }
+            }
+        }
+    }
+}
